@@ -107,12 +107,66 @@
     color: #fff;
   }
   .empty { color: var(--sub); text-align: center; padding: 40px 0; font-size: 15px; }
+  .tabs { display: flex; gap: 8px; margin: 0 0 14px; }
+  .tab {
+    flex: 1;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--sub);
+    font-size: 15px;
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .qcard {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 16px;
+    margin-top: 14px;
+    text-align: center;
+  }
+  .qlabel { font-size: 13px; color: var(--sub); margin-bottom: 10px; }
+  .qletters {
+    font-size: 22px;
+    margin: 14px 0 10px;
+    color: var(--ink);
+    line-height: 1.5;
+  }
+  .qletters b {
+    display: inline-block;
+    min-width: 52px;
+    padding: 6px 14px;
+    margin: 0 6px;
+    border-radius: 12px;
+    background: var(--chip);
+    color: var(--chip-ink);
+    font-size: 34px;
+    font-weight: 700;
+    font-family: Consolas, Menlo, monospace;
+  }
+  .qlen { font-size: 14px; color: var(--sub); margin-bottom: 6px; }
+  .qbtns { display: flex; gap: 10px; margin-top: 18px; }
+  .qbtn {
+    flex: 1;
+    padding: 13px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .qbtn.primary { background: var(--accent); color: #fff; }
+  .qbtn.ghost { background: var(--chip); color: var(--chip-ink); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>單字查找器</h1>
-  <p class="hint">輸入開頭與結尾字母，自動排除 -ed／-ing 動詞變化與複數形</p>
+  <p class="hint" id="modeHint">輸入開頭與結尾字母，自動排除 -ed／-ing 動詞變化與複數形</p>
+  <div class="tabs">
+    <button class="tab active" id="tabSearch">查單字</button>
+    <button class="tab" id="tabQuiz">測驗</button>
+  </div>
   <div class="panel">
     <div class="field">
       <label>開頭字母</label>
@@ -124,9 +178,26 @@
       <input id="last" type="text" inputmode="latin" autocapitalize="none" autocomplete="off" placeholder="e">
     </div>
   </div>
-  <div class="count" id="count"></div>
-  <div id="results"></div>
-  <button class="more" id="more" style="display:none">顯示更多</button>
+  <div id="searchView">
+    <div class="count" id="count"></div>
+    <div id="results"></div>
+    <button class="more" id="more" style="display:none">顯示更多</button>
+  </div>
+  <div id="quizView" style="display:none">
+    <div class="qcard">
+      <div class="qlabel">想出符合條件的英文單字！</div>
+      <div class="qletters" id="qLetters"></div>
+      <div class="qlen" id="qCount"></div>
+      <div class="qbtns">
+        <button class="qbtn ghost" id="btnReveal">看解答</button>
+        <button class="qbtn primary" id="btnNext">下一題</button>
+      </div>
+    </div>
+    <div id="qAnswers" style="display:none">
+      <div class="count" id="qAnswerCount"></div>
+      <div id="qAnswerList"></div>
+    </div>
+  </div>
 </div>
 
 <script id="words" type="text/plain">aa	
@@ -25578,6 +25649,107 @@ zooming	n. 動能攢升</script>
   }
 
   $more.addEventListener('click', renderMore);
+
+  // ---- 測驗模式：隨機出「開頭＋結尾字母」，按解答列出所有符合單字 ----
+  let mode = 'search';
+  let pairKeys = null;   // 符合出題資格的字母組合
+  let pairMap = null;    // "a|b" -> 單字清單
+  let current = null;
+
+  const $searchView = document.getElementById('searchView');
+  const $quizView = document.getElementById('quizView');
+  const $tabSearch = document.getElementById('tabSearch');
+  const $tabQuiz = document.getElementById('tabQuiz');
+  const $modeHint = document.getElementById('modeHint');
+  const $panel = document.querySelector('.panel');
+  const $qLetters = document.getElementById('qLetters');
+  const $qCount = document.getElementById('qCount');
+  const $qAnswers = document.getElementById('qAnswers');
+  const $qAnswerCount = document.getElementById('qAnswerCount');
+  const $qAnswerList = document.getElementById('qAnswerList');
+  const $btnReveal = document.getElementById('btnReveal');
+  const $btnNext = document.getElementById('btnNext');
+
+  function buildPairs() {
+    if (pairMap) return;
+    pairMap = {};
+    for (const e of ENTRIES) {
+      const w = e[0];
+      if (w.length < 3 || isDerived(w)) continue;
+      const key = w[0] + '|' + w[w.length - 1];
+      (pairMap[key] = pairMap[key] || []).push(e);
+    }
+    // 至少 5 個單字的組合才拿來出題，避免太冷門
+    pairKeys = Object.keys(pairMap).filter(k => pairMap[k].length >= 5);
+  }
+
+  function newQuestion() {
+    buildPairs();
+    const key = pairKeys[Math.floor(Math.random() * pairKeys.length)];
+    current = key;
+    const parts = key.split('|');
+    $qLetters.innerHTML = '開頭 <b></b> 結尾 <b></b>';
+    const bs = $qLetters.querySelectorAll('b');
+    bs[0].textContent = parts[0];
+    bs[1].textContent = parts[1];
+    $qCount.textContent = '共有 ' + pairMap[key].length + ' 個單字，你能想出幾個？';
+    $qAnswers.style.display = 'none';
+    $qAnswerList.innerHTML = '';
+  }
+
+  function reveal() {
+    if (!current) return;
+    const list = pairMap[current].slice()
+      .sort((x, y) => x[0].length - y[0].length || (x[0] < y[0] ? -1 : 1));
+    $qAnswerCount.innerHTML = '解答：共 <b>' + list.length + '</b> 個單字';
+    $qAnswerList.innerHTML = '';
+    let lastLen = 0;
+    let grid = null;
+    for (const e of list) {
+      if (e[0].length !== lastLen) {
+        lastLen = e[0].length;
+        const t = document.createElement('div');
+        t.className = 'len-title';
+        t.textContent = lastLen + ' 個字母';
+        $qAnswerList.appendChild(t);
+        grid = document.createElement('div');
+        grid.className = 'grid';
+        $qAnswerList.appendChild(grid);
+      }
+      const row = document.createElement('div');
+      row.className = 'row';
+      const w = document.createElement('span');
+      w.className = 'w';
+      w.textContent = e[0];
+      const t = document.createElement('span');
+      t.className = 't';
+      t.textContent = e[1];
+      row.appendChild(w);
+      row.appendChild(t);
+      grid.appendChild(row);
+    }
+    $qAnswers.style.display = '';
+  }
+
+  function setMode(m) {
+    mode = m;
+    const quiz = m === 'quiz';
+    $tabSearch.classList.toggle('active', !quiz);
+    $tabQuiz.classList.toggle('active', quiz);
+    $searchView.style.display = quiz ? 'none' : '';
+    $quizView.style.display = quiz ? '' : 'none';
+    $panel.style.display = quiz ? 'none' : '';
+    $modeHint.textContent = quiz
+      ? '系統隨機出題，想出符合開頭與結尾字母的單字，再按「看解答」對答案'
+      : '輸入開頭與結尾字母，自動排除 -ed／-ing 動詞變化與複數形';
+    if (quiz && !current) newQuestion();
+  }
+
+  $tabSearch.addEventListener('click', () => setMode('search'));
+  $tabQuiz.addEventListener('click', () => setMode('quiz'));
+  $btnNext.addEventListener('click', newQuestion);
+  $btnReveal.addEventListener('click', reveal);
+
   $first.addEventListener('input', search);
   $last.addEventListener('input', search);
 })();
